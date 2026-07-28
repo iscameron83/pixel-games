@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mango Cay: A Pixel Pirate Adventure</title>
+<style>
+  :root {
+    --ui-bg: #08080c;
+    --verb: #8c4ae0;
+    --verb-hi: #d8b8ff;
+    --verb-sel: #ffffff;
+    --sentence: #c09ae8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: var(--ui-bg);
+    height: 100%;
+    font-family: Georgia, 'Times New Roman', serif;
+    -webkit-user-select: none; user-select: none;
+    touch-action: manipulation;
+  }
+  #game {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    justify-content: center;
+  }
+  #sceneWrap { position: relative; width: 100%; background: #000; }
+  canvas#scene {
+    display: block;
+    width: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    cursor: crosshair;
+  }
+  #sentence {
+    background: var(--ui-bg);
+    color: var(--sentence);
+    font-weight: bold;
+    text-align: center;
+    padding: 5px 8px;
+    font-size: clamp(14px, 2.6vw, 20px);
+    letter-spacing: 1px;
+    min-height: 30px;
+  }
+  #controls {
+    display: flex;
+    background: var(--ui-bg);
+    padding: 4px 8px 10px;
+    gap: 10px;
+  }
+  #verbs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    flex: 1.2;
+  }
+  .verb {
+    background: none;
+    border: none;
+    color: var(--verb);
+    font-family: inherit;
+    font-weight: bold;
+    font-size: clamp(15px, 3vw, 22px);
+    padding: 7px 4px;
+    cursor: pointer;
+    text-align: center;
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 0 #000;
+  }
+  .verb:hover { color: var(--verb-hi); }
+  .verb.selected { color: var(--verb-sel); }
+  #invPanel { flex: 1; display: flex; flex-direction: column; }
+  #invLabel {
+    color: #5a4a7a; font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; padding: 2px 4px;
+    font-family: 'Courier New', monospace;
+  }
+  #inventory {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    flex: 1;
+    align-content: start;
+  }
+  .invItem {
+    background: #10101e;
+    border: 2px solid #2a2048;
+    border-radius: 2px;
+    cursor: pointer;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .invItem:hover { border-color: var(--verb-hi); }
+  .invItem.selected { border-color: var(--verb-sel); }
+  .invItem canvas { width: 80%; image-rendering: pixelated; }
+  #titleOverlay {
+    position: absolute; inset: 0;
+    background: rgba(6,6,16,0.82);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; cursor: pointer; text-align: center; padding: 20px;
+  }
+  #titleOverlay h1 {
+    color: #d848c8;
+    font-size: clamp(30px, 7vw, 60px);
+    letter-spacing: 3px;
+    font-weight: bold;
+    text-shadow: 2px 2px 0 #58105a, 4px 4px 0 #200828, 7px 7px 0 #000;
+  }
+  #titleOverlay .sub { color: #8888c8; font-size: clamp(12px, 2.2vw, 16px); letter-spacing: 2px; font-style: italic; }
+  #titleOverlay .cast { color: #5a5a9a; font-size: clamp(11px, 2vw, 14px); }
+  #titleOverlay .blink { color: #d8b8ff; animation: blink 1.2s steps(2) infinite; margin-top: 12px; font-family: 'Courier New', monospace; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="sceneWrap">
+    <canvas id="scene" width="320" height="160"></canvas>
+    <div id="titleOverlay">
+      <h1>MANGO CAY</h1>
+      <p class="sub">a pixel pirate adventure</p>
+      <p class="cast">starring Milo Brine, aspiring buccaneer</p>
+      <p class="blink">~ click to begin ~</p>
+    </div>
+  </div>
+  <div id="sentence">walk to</div>
+  <div id="controls">
+    <div id="verbs">
+      <button class="verb" data-verb="Give">Give</button>
+      <button class="verb" data-verb="Open">Open</button>
+      <button class="verb" data-verb="Look at">Look at</button>
+      <button class="verb" data-verb="Pick up">Pick up</button>
+      <button class="verb" data-verb="Talk to">Talk to</button>
+      <button class="verb" data-verb="Use">Use</button>
+      <button class="verb" data-verb="Push">Push</button>
+      <button class="verb" data-verb="Pull">Pull</button>
+      <button class="verb" data-verb="Walk to">Walk to</button>
+    </div>
+    <div id="invPanel">
+      <div id="invLabel">Inventory</div>
+      <div id="inventory"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const cv = document.getElementById('scene');
+const mainCtx = cv.getContext('2d');
+const W = 320, H = 160;
+const HOR = 86, PLAZA = 112, WALK_Y = 150;
+
+// C is the active drawing context; points at bg during prerender, main during play
+let C = mainCtx;
+function px(x, y, w, h, color) {
+  C.fillStyle = color;
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  C.fillRect(x0, y0, Math.max(1, Math.floor(x + w) - x0), Math.max(1, Math.floor(y + h) - y0));
+}
+function dither(x, y, w, h, c1, c2) {
+  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++)
+    px(xx, yy, 1, 1, ((xx + yy) & 1) ? c2 : c1);
+}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+// ---------- palette ----------
+const P = {
+  sky0:'#0e0e2a', sky1:'#13133a', sky2:'#1a1a4c', sky3:'#23235e',
+  star:'#d8d8f0', starDim:'#5a5a9a',
+  moon:'#e8e8d0', moonSh:'#c2c2a4',
+  sea0:'#16224e', sea1:'#1e2e62', seaHi:'#3a4a8e', moonPath:'#8a8a78',
+  wallL:'#2c2c68', wallLd:'#232358', wallHi:'#3a3a80',
+  wallR:'#282862', wallRd:'#1f1f50',
+  timber:'#12123a', timberHi:'#1b1b4a',
+  roof:'#181845', roofHi:'#22225a',
+  winLit:'#e8a33d', winLit2:'#c07c28', winDark:'#181840', frame:'#0e0e30',
+  door:'#1a1030', doorWood:'#2a1a48',
+  stoneA:'#141430', stoneB:'#1a1a3c', stoneHi:'#26264c', stoneDk:'#0c0c22', gap:'#080816',
+  wood:'#3a2a5a', woodDk:'#281a44', woodHi:'#4a3a70',
+  signBg:'#c8b890', signInk:'#4a3a5a',
+};
+
+// ---------- sky ----------
+const rngStars = mulberry32(7);
+const stars = Array.from({length: 70}, () => ({ x: (rngStars()*W)|0, y: (rngStars()*80)|0, p: rngStars()*100 }));
+function drawSkyBase() {
+  px(0,0,W,30,P.sky0);
+  dither(0,30,W,8,P.sky0,P.sky1);
+  px(0,38,W,16,P.sky1);
+  dither(0,54,W,8,P.sky1,P.sky2);
+  px(0,62,W,14,P.sky2);
+  dither(0,76,W,6,P.sky2,P.sky3);
+  px(0,82,W,6,P.sky3);
+  // moon
+  const mx=152,my=22;
+  px(mx+3,my,12,18,P.moon); px(mx,my+3,18,12,P.moon); px(mx+1,my+1,16,16,P.moon);
+  px(mx+5,my+5,4,3,P.moonSh); px(mx+11,my+9,3,3,P.moonSh); px(mx+6,my+12,2,2,P.moonSh);
+  dither(mx+2,my+13,6,3,P.moon,P.moonSh);
+}
+function drawStars(t) {
+  stars.forEach(s => {
+    if (!s.sky) return;   // skip stars that sit behind a building
+    const tw = Math.sin((t + s.p) * 0.05) > 0.2;
+    px(s.x, s.y, 1, 1, tw ? P.star : P.starDim);
+  });
+}
+
+// ---------- sea (dynamic: redrawn each frame) ----------
+function drawSea(t) {
+  dither(92, HOR, 142, 2, P.sky3, P.sea1);
+  px(92, HOR+2, 142, PLAZA-HOR-2, P.sea0);
+  for (let y = HOR+3; y < PLAZA; y += 3) {
+    const off = ((t*0.5|0) + y*7) % 18;
+    for (let x = 92 - 18 + off; x < 234; x += 18) {
+      px(Math.max(92,x), y, Math.min(5, 234-x), 1, P.sea1);
+    }
+  }
+  for (let y = HOR+2; y < PLAZA; y += 2) {
+    const sway = Math.round(Math.sin(t*0.03 + y*0.7)*2);
+    const w = 3 + ((y-HOR)/6|0);
+    px(158 - w/2 + sway, y, w, 1, ((y & 3)===0) ? P.moonPath : P.seaHi);
+  }
+}
+function drawDistance() {
+  // island silhouette
+  px(196, HOR-4, 30, 4, '#0c0c26');
+  px(202, HOR-7, 16, 3, '#0c0c26');
+  px(208, HOR-9, 6, 2, '#0c0c26');
+  // anchored ship silhouette
+  px(112, HOR-5, 22, 5, '#0c0c26');
+  px(110, HOR-3, 26, 3, '#0c0c26');
+  px(118, HOR-14, 1, 10, '#0c0c26');
+  px(127, HOR-17, 1, 13, '#0c0c26');
+  px(115, HOR-12, 7, 5, '#141438');
+  px(124, HOR-15, 7, 6, '#141438');
+  px(130, HOR-4, 1, 1, '#e8a33d');
+}
+
+// ---------- buildings ----------
+function wall(xTop, xBot, wTop, wBot, yTop, yBot, c) {
+  for (let y = yTop; y < yBot; y++) {
+    const f = (y - yTop) / (yBot - yTop);
+    const xl = xTop + (xBot - xTop) * f;
+    const ww = wTop + (wBot - wTop) * f;
+    px(Math.round(xl), y, Math.round(ww), 1, c);
+  }
+}
+function leanX(xTop, xBot, yTop, yBot, y) {
+  return xTop + (xBot - xTop) * ((y - yTop) / (yBot - yTop));
+}
+function litWindow(x, y, w, h, flickOn) {
+  px(x-1, y-1, w+2, h+2, P.frame);
+  px(x, y, w, h, flickOn ? P.winLit : P.winLit2);
+  px(x + (w>>1), y, 1, h, P.frame);
+  px(x, y + (h>>1), w, 1, P.frame);
+  dither(x, y+h-2, w, 2, flickOn ? P.winLit : P.winLit2, P.winLit2);
+}
+function darkWindow(x, y, w, h) {
+  px(x-1, y-1, w+2, h+2, P.frame);
+  px(x, y, w, h, P.winDark);
+  px(x + (w>>1), y, 1, h, P.frame);
+  px(x, y + (h>>1), w, 1, P.frame);
+  px(x+1, y+1, 2, 1, '#2a2a5e');
+}
+
+function drawTavern() {
+  const yT = 8, yB = PLAZA + 2;
+  const xTopL = -4, xBotL = -22;
+  const wTop = 104, wBot = 122;
+  wall(xTopL, xBotL, wTop, wBot, yT+10, yB, P.wallL);
+  const nr = mulberry32(42);
+  for (let i = 0; i < 260; i++) {
+    const y = yT+12 + (nr()*(yB-yT-14))|0;
+    const xl = leanX(xTopL, xBotL, yT+10, yB, y);
+    const ww = wTop + (wBot - wTop) * ((y-(yT+10))/(yB-(yT+10)));
+    px(Math.round(xl + 2 + nr()*(ww-4)), y, 1, 1, nr() < 0.5 ? P.wallLd : P.wallHi);
+  }
+  for (let y = yT+10; y < yB; y++) {
+    const xl = leanX(xTopL, xBotL, yT+10, yB, y);
+    const ww = wTop + (wBot - wTop) * ((y-(yT+10))/(yB-(yT+10)));
+    px(Math.round(xl+ww)-6, y, 6, 1, ((y + Math.round(xl)) & 1) ? P.wallLd : P.wallL);
+    px(Math.round(xl+ww)-2, y, 2, 1, P.timber);
+  }
+  // slanted, sagging roof
+  for (let x = -18; x < 104; x++) {
+    const sag = Math.round(Math.sin((x+18)/122*Math.PI) * 3);
+    const ry = yT + Math.round((x+18)*0.04) - sag;
+    px(x, ry, 1, 7, P.roof);
+    px(x, ry, 1, 2, P.roofHi);
+    px(x, ry+7, 1, 2, P.timber);
+  }
+  px(-18, 58, 116, 3, P.timber);
+  px(-18, 56, 112, 1, P.timberHi);
+  [16, 44, 72].forEach(sx => {
+    for (let y = yT+12; y < 56; y++) px(Math.round(sx + (y-yT)*0.16), y, 2, 1, P.timber);
+  });
+  [10, 60].forEach(sx => {
+    for (let y = 62; y < yB; y++) px(Math.round(sx - (y-62)*0.08), y, 2, 1, P.timber);
+  });
+  for (let i = 0; i < 12; i++) { px(22+i, 26+i, 2, 1, P.timber); px(58-i, 26+i, 2, 1, P.timber); }
+  // window sill
+  px(58, 92, 24, 2, P.timber);
+  // door
+  px(24, 78, 24, PLAZA-78+2, P.frame);
+  px(26, 80, 20, PLAZA-80+2, P.doorWood);
+  px(28, 74, 16, 6, P.frame);
+  for (let y = 84; y < PLAZA; y += 5) px(26, y, 20, 1, P.door);
+  px(42, 98, 2, 4, '#c8a040');
+  // lantern post
+  px(16, 84, 2, 14, P.timber);
+  px(13, 82, 8, 10, P.frame);
+  // hanging sign
+  px(94, 62, 2, 12, P.timber); px(110, 62, 2, 12, P.timber);
+  px(90, 60, 26, 3, P.timber);
+  px(92, 74, 22, 16, P.woodDk);
+  px(94, 76, 18, 12, P.signBg);
+  px(102, 78, 2, 7, P.signInk); px(99, 84, 8, 2, P.signInk); px(100, 77, 6, 1, P.signInk);
+  // chimney
+  px(18, 0, 8, 8, P.roof); px(18, 0, 8, 3, P.roofHi);
+}
+function drawTavernGlow(t) {
+  const flick = Math.sin(t*0.09) > -0.5;
+  litWindow(26, 30, 12, 14, flick);
+  litWindow(54, 32, 12, 14, !flick || Math.sin(t*0.07) > 0);
+  darkWindow(82, 36, 10, 12);
+  litWindow(60, 72, 20, 18, flick);
+  px(30, 76, 12, 4, flick ? P.winLit2 : P.winLit);   // transom
+  px(15, 84, 4, 6, flick ? P.winLit : P.winLit2);    // lantern flame
+  dither(52, PLAZA, 34, 3, P.stoneB, '#4a3a50');     // light spills
+  dither(26, PLAZA+2, 20, 2, P.stoneB, '#453548');
+  dither(10, 94, 14, 2, P.stoneB, '#4a3a50');
+}
+function drawSmoke(t) {
+  for (let i = 0; i < 4; i++) {
+    const phase = (t*0.4 + i*12) % 44;
+    const sx = 20 + Math.round(Math.sin((t*0.05)+i*1.7)*3) + Math.round(phase*0.18);
+    const sy = 4 - phase;
+    if (sy > -6 && sy < 82) px(sx, sy, 2 + (i&1), 2, '#252550');
+  }
+}
+
+function drawRightBuilding() {
+  const yT = 18, yB = PLAZA + 2;
+  const xTop = 246, xBot = 226;
+  const wTop = 84, wBot = 104;
+  wall(xTop, xBot, wTop, wBot, yT+10, yB, P.wallR);
+  const nr = mulberry32(97);
+  for (let i = 0; i < 220; i++) {
+    const y = yT+12 + (nr()*(yB-yT-14))|0;
+    const xl = leanX(xTop, xBot, yT+10, yB, y);
+    const ww = wTop + (wBot - wTop) * ((y-(yT+10))/(yB-(yT+10)));
+    px(Math.round(xl + 2 + nr()*(ww-4)), y, 1, 1, nr() < 0.5 ? P.wallRd : P.wallHi);
+  }
+  for (let y = yT+10; y < yB; y++) {
+    const xl = leanX(xTop, xBot, yT+10, yB, y);
+    px(Math.round(xl), y, 2, 1, P.timber);
+    px(Math.round(xl)+2, y, 3, 1, ((y + Math.round(xl)) & 1) ? P.wallHi : P.wallR);
+  }
+  for (let x = 226; x < 322; x++) {
+    const ry = yT + Math.round((322-x)*0.06);
+    px(x, ry, 1, 7, P.roof);
+    px(x, ry, 1, 2, P.roofHi);
+    px(x, ry+7, 1, 2, P.timber);
+  }
+  px(226, 62, 96, 3, P.timber);
+  px(228, 60, 92, 1, P.timberHi);
+  [262, 288, 310].forEach(sx => {
+    for (let y = yT+12; y < 60; y++) px(Math.round(sx - (y-yT)*0.18), y, 2, 1, P.timber);
+  });
+  // awning over a shuttered stall
+  for (let i = 0; i < 8; i++) px(242 - i, 94 + i, 48, 1, (i & 1) ? P.woodDk : P.wood);
+  px(238, 102, 2, PLAZA-102, P.timber); px(288, 102, 2, PLAZA-102, P.timber);
+}
+function drawRightGlow(t) {
+  const flick = Math.sin(t*0.08 + 2) > -0.4;
+  litWindow(262, 32, 12, 14, flick);
+  darkWindow(286, 30, 12, 14);
+  litWindow(306, 34, 10, 12, true);
+  darkWindow(244, 74, 12, 14);
+  litWindow(268, 72, 12, 16, flick);
+  darkWindow(296, 74, 12, 14);
+}
+
+// ---------- plaza ----------
+const rngStone = mulberry32(1234);
+const stones = [];
+for (let row = 0; row < 14; row++) {
+  const y = PLAZA + row * 3.6;
+  const scale = 1 + row * 0.10;
+  for (let x = -6 + (row % 2) * 4; x < W + 8; x += 7 * scale) {
+    stones.push({
+      x: x + rngStone()*3, y,
+      w: (5 + rngStone()*3) * scale, h: 2.6 * scale,
+      c: rngStone() < 0.18 ? P.stoneHi : (rngStone() < 0.4 ? P.stoneA : P.stoneB),
+    });
+  }
+}
+function drawPlaza() {
+  px(0, PLAZA, W, H - PLAZA, P.gap);
+  stones.forEach(s => {
+    px(s.x, s.y, s.w, s.h, s.c);
+    px(s.x, s.y + s.h - 1, s.w, 1, P.stoneDk);
+    px(s.x + 1, s.y, Math.max(1, s.w * 0.4), 1, s.c === P.stoneHi ? '#32325e' : P.stoneHi);
+  });
+  [[60, 128, 30], [230, 140, 40]].forEach(([qx, qy, qw]) => {
+    for (let y = 0; y < 6; y++) for (let x = 0; x < qw; x++) {
+      const inside = Math.abs(x - qw/2) / (qw/2) + Math.abs(y - 3) / 3 < 1.2;
+      if (inside && ((x + y) & 1)) px(qx + x, qy + y, 1, 1, '#24345e');
+    }
+  });
+  for (let y = PLAZA; y < H; y += 1) {
+    for (let x = 130; x < 190; x += 2) {
+      if (((x + y) & 3) === 0) px(x + ((y&1)?1:0), y, 1, 1, P.stoneHi);
+    }
+  }
+  px(92, PLAZA-2, 142, 3, P.woodDk);
+  px(92, PLAZA-3, 142, 1, P.woodHi);
+}
+
+// ---------- props ----------
+function drawBoat(t) {
+  const bob = Math.round(Math.sin(t*0.04)*1);
+  const y = 100 + bob;
+  px(168, y, 30, 2, P.woodHi);
+  px(166, y+2, 34, 4, P.wood);
+  px(170, y+6, 26, 2, P.woodDk);
+  px(180, y-4, 2, 4, P.woodDk);
+  px(172, y+8, 22, 1, '#101838');
+}
+function drawBarrel() {
+  const bx = 112, by = 118;
+  px(bx, by, 22, 24, P.wood);
+  dither(bx+2, by, 18, 24, P.woodHi, P.wood);
+  px(bx, by+2, 22, 2, P.woodDk);
+  px(bx, by+11, 22, 2, P.woodDk);
+  px(bx, by+20, 22, 2, P.woodDk);
+  px(bx+2, by-2, 18, 3, '#16224e');
+  px(bx+5, by-6, 3, 5, '#6a9ab8'); px(bx+6, by-8, 2, 3, '#88b4cc');
+  px(bx+13, by-5, 3, 4, '#6a9ab8');
+}
+function drawPost() {
+  // mooring piling, centered under the parrot so it roosts on the flat top
+  const cx = 205;
+  px(cx - 5, 100, 10, 4, P.wood);     // cap x200-209, top at y100 (bird's feet)
+  px(cx - 5, 100, 10, 1, P.woodHi);   // lit top edge it stands on
+  px(cx - 4, 103, 8, 1, P.woodDk);    // cap underside shadow
+  px(cx - 3, 104, 6, 42, P.woodDk);   // stem x202-207 dropping to the waterline
+  px(cx - 2, 104, 2, 42, P.woodHi);   // stem highlight
+}
+
+// ---------- sprites ----------
+function drawMap(map, colors, x, y, flip) {
+  const w = map[0].length;
+  for (let r = 0; r < map.length; r++) for (let c = 0; c < w; c++) {
+    const ch = map[r][c];
+    if (ch === '.') continue;
+    px(x + (flip ? w - 1 - c : c), y + r, 1, 1, colors[ch]);
+  }
+}
+const MC = {
+  o:'#d86a3c', r:'#b03028', R:'#7c1c18',              // hair: highlight / mid / shadow
+  k:'#e8c79b', s:'#d8a878', S:'#a87a50', e:'#241521', // skin: highlight / mid / shadow / eye
+  y:'#4aa6a6', t:'#2e7e7e', T:'#1d5555', g:'#153f3f', // shirt: highlight / mid / shadow / deep
+  c:'#e0d8be', C:'#a89e84',                           // rolled cuffs & collar
+  n:'#3c3c62', p:'#2e2e4e', P:'#1b1b33',              // trousers: highlight / mid / shadow
+  b:'#3a2a1a', B:'#241610', H:'#5c4026',              // boots: mid / shadow / highlight
+  d:'#6b4a22', D:'#c8a040',                           // belt leather / brass buckle
+};
+const MILO_BODY = [
+  ".....orrro......",
+  "....orrrrro.....",
+  "...orrrrrrrR....",
+  "...RrrrrrrRR....",
+  "...RksssssSR....",
+  "...RkssssssR....",
+  "...RkessseSR....",
+  "....kssSssS.....",
+  "....SssssS......",
+  ".....SssS.......",
+  "......ssss......",
+  "....ccttttcc....",
+  "....yyttttTT....",
+  "...cyttttttTc...",
+  "..cc.tttttt.cc..",
+  "..cc.yttttT.cc..",
+  "..sc.gttttg.cs..",
+  "..ss.tttttT.ss..",
+  ".....tttttT.....",
+  ".....gttttT.....",
+  ".....ddDDdd.....",
+  ".....nppppP.....",
+  ".....nppppP.....",
+  ".....nppppP.....",
+  ".....nppppP.....",
+  ".....PppppP.....",
+];
+const LEGS_STAND = [
+  ".....np..np.....",
+  ".....np..np.....",
+  ".....np..np.....",
+  ".....pP..pP.....",
+  ".....np..np.....",
+  ".....np..np.....",
+  ".....pP..pP.....",
+  ".....pp..pp.....",
+  ".....bb..bb.....",
+  ".....bb..bb.....",
+  "....Bbb..bbB....",
+  "...Hbbb..bbbH...",
+  "...Bbbb..bbbB...",
+  "...BBBB..BBBB...",
+];
+const LEGS_A = [
+  ".....np..np.....",
+  ".....np..np.....",
+  "....np....np....",
+  "....np....np....",
+  "...np......np...",
+  "...nP......nP...",
+  "...np......np...",
+  "..np........np..",
+  "..np........np..",
+  "..bb........bb..",
+  ".Hbb........bbH.",
+  ".Bbb........bbB.",
+  "..BB........BB..",
+  "................",
+];
+const LEGS_B = [
+  ".....np..np.....",
+  ".....np..np.....",
+  ".....np.np......",
+  ".....np.np......",
+  ".....np.np......",
+  ".....pP.pP......",
+  ".....np.np......",
+  ".....nppp.......",
+  ".....nppp.......",
+  ".....nppp.......",
+  ".....bbbb.......",
+  "....Hbbbb.......",
+  "....Bbbbb.......",
+  "....BBBB........",
+];
+const DC = {
+  g:'#c2c2ce', G:'#8e8ea0', w:'#d8d4c4',              // beard/hair light / shadow, shirt
+  s:'#c89868', S:'#9a6e42', e:'#1a1020',              // skin: mid / shadow / eye
+  c:'#5a3a20', C:'#3c2410', o:'#6e4a28',              // coat: mid / shadow / highlight
+  y:'#c8a040', Y:'#8a6a1a',                           // brass buckle / button
+  p:'#2a2a3e', P:'#1a1a2a',                           // trousers
+  b:'#241a12', B:'#3a2a1a',                           // boots
+};
+const DOCKMASTER = [
+  "......ssss......",
+  ".....ssssss.....",
+  "....gssssssg....",
+  "...gGssssssGg...",
+  "...gsessesg.....",
+  "...gsssSssg.....",
+  "..gggGGGggg.....",
+  ".gggggGgggGg....",
+  ".gggGgggggGg....",
+  "..ggggGgggg.....",
+  "...gggGggg......",
+  ".ccooggoocc.....",
+  "..ccowwwocc.....",
+  "..ccowywocc.....",
+  "..ccocccocc.....",
+  "..ccoyccocc.....",
+  "..ccocccocc.....",
+  "..ccoyccocc.....",
+  "..ccocccocc.....",
+  "..cCoccocCc.....",
+  "..cyyyYyyyc.....",
+  "..cCcccccCc.....",
+  "....nppppP......",
+  "....np..pP......",
+  "....np..pP......",
+  "....np..pP......",
+  "....bb..bb......",
+  "....bb..bb......",
+  "...Bbb..bbB.....",
+  "...bbb..bbb.....",
+];
+const PC = { g:'#3a9e2a', G:'#2a7a1c', l:'#68d84c', y:'#e8c040', o:'#e08830', e:'#100c18', r:'#c03828', w:'#e8e0c8' };
+const PARROT = [
+  "...ll.....",
+  "..llll....",
+  ".llllle...",
+  ".llGyyy...",
+  ".gllG.....",
+  "rggGl.....",
+  "rrgGGl....",
+  "rrgggl....",
+  ".rggG.....",
+  "..gg......",
+  "..oo.o....",
+];
+
+// ================= TAVERN INTERIOR =================
+const TFLOOR = 118;
+const TAV = {
+  wall:'#4a3320', wallD:'#382512', wallHi:'#5c4228',
+  beam:'#2a1c10', beamHi:'#3e2c1a',
+  floor:'#3a2818', floorD:'#2a1c10', floorHi:'#4c3624',
+  ceil:'#201408', ceilHi:'#2e2012',
+  stone:'#585048', stoneD:'#3a342e', stoneHi:'#6e665c',
+  fire:'#e8681c', fireHi:'#f4c838', fireD:'#a83208',
+  glass:'#233f70', glassHi:'#3f63a0', glassD:'#132348',
+  curtain:'#8a1e20', curtainD:'#561012', curtainHi:'#b23830',
+  cand:'#e8c040', wax:'#d8d0b8', metal:'#2a2620', metalHi:'#4a443a',
+  mug:'#8a8478', mugHi:'#aaa498',
+  door:'#3a2614', doorHi:'#4e3420', doorFrame:'#201408',
+};
+// seated pirate (shared shape, coat colour swapped per captain)
+const PIR = {
+  h:'#221a2c', H:'#c8a040', s:'#d8a878', S:'#a87a50', e:'#1a1020',
+  f:'#9a948a', w:'#d8d4c4', y:'#e8c040', a:'#d8a878',
+};
+const PIR_BLUE    = { ...PIR, c:'#2a3a78', C:'#1a2650', o:'#3a4e96' };
+const PIR_GREEN   = { ...PIR, c:'#2a6a3a', C:'#184626', o:'#3a8a4e' };
+const PIR_CRIMSON = { ...PIR, c:'#7a2622', C:'#521414', o:'#9a342c' };
+const PIRATE_SIT = [
+  "...hhhhhhhh.....",
+  "..hhhhhhhhhh....",
+  ".HhhhhhhhhhhH...",
+  "..hhhhhhhhhh....",
+  ".....ssssss.....",
+  ".....seSSes.....",
+  ".....ssssss.....",
+  ".....ffffff.....",
+  "....ffffffff....",
+  "....ffffffff....",
+  ".....wwww.......",
+  "..ccoooooocc....",
+  "..ccoowwoocc....",
+  "..ccooyooocc....",
+  "..ccoooooocc....",
+  ".accoooooocca...",
+  ".aaccooooccaa...",
+  "..ccoooooocc....",
+  "..CCooooooCC....",
+];
+// barkeep reuses the dockmaster silhouette with a cream-apron palette
+const BARKEEP = {
+  g:'#6a4a2a', G:'#463014', w:'#dcd8c8',
+  s:'#d8a878', S:'#a87a50', e:'#1a1020',
+  c:'#c8bfa2', C:'#a2967a', o:'#dcd4ba',
+  y:'#9a7a3a', Y:'#6a4e1e',
+  n:'#463726', p:'#3a2e22', P:'#241a12', b:'#241a12', B:'#3a2a1a',
+};
+
+function drawCurtain(x, y, w, h) {
+  for (let i = 0; i < w; i++) {
+    const fold = Math.sin(i * 0.95);
+    const col = fold > 0.4 ? TAV.curtainHi : (fold < -0.3 ? TAV.curtainD : TAV.curtain);
+    px(x + i, y, 1, h, col);
+  }
+  for (let i = 0; i < w; i += 4) px(x + i, y + h, 2, 3, TAV.curtainD);
+}
+function drawTavWindowFrame() {
+  const wx = 22, wy = 46, ww = 34, wh = 46, seaY = wy + 19;
+  px(wx - 3, wy - 4, ww + 6, wh + 8, TAV.beamHi);
+  px(wx - 2, wy - 3, ww + 4, wh + 6, TAV.beam);
+  // night sky over ocean
+  px(wx, wy, ww, wh, '#16234a');
+  px(wx, seaY, ww, wh - (seaY - wy), TAV.glassD);
+  // stars
+  const sr = mulberry32(88);
+  for (let i = 0; i < 11; i++) px(wx + 2 + (sr() * (ww - 4) | 0), wy + 2 + (sr() * 15 | 0), 1, 1, '#c8cce8');
+  // moon
+  px(wx + 22, wy + 5, 6, 6, '#e8e8d0'); px(wx + 21, wy + 6, 8, 4, '#e8e8d0'); px(wx + 24, wy + 7, 2, 2, '#c2c2a4');
+  // distant boat on the horizon
+  px(wx + 6, seaY - 3, 8, 3, '#0d1330'); px(wx + 9, seaY - 7, 1, 4, '#0d1330'); px(wx + 5, seaY - 1, 11, 1, '#0d1330');
+  // calm base ripples
+  for (let y = seaY + 3; y < wy + wh - 2; y += 4)
+    for (let x = wx + 3; x < wx + ww - 3; x += 9) px(x + ((y & 2) ? 3 : 0), y, 4, 1, TAV.glass);
+  // rounded top corners
+  for (let yy = 0; yy < 7; yy++) for (let xx = 0; xx < 7; xx++) {
+    if (xx + yy < 6) { px(wx + xx, wy + yy, 1, 1, TAV.beam); px(wx + ww - 1 - xx, wy + yy, 1, 1, TAV.beam); }
+  }
+  px(wx + (ww >> 1), wy, 1, wh, TAV.beam);
+  px(wx, wy + (wh >> 1), ww, 1, TAV.beam);
+}
+function drawTavWindow(t) {
+  const wx = 22, wy = 46, ww = 34, wh = 46, seaY = wy + 19;
+  // gentle moonlight reflection swaying on the water, under the moon
+  for (let y = seaY + 1; y < wy + wh - 2; y += 2) {
+    const sway = Math.round(Math.sin(t * 0.03 + y * 0.5) * 1);
+    px(wx + 24 + sway, y, 2, 1, TAV.glassHi);
+  }
+  // keep the muntins crisp on top
+  px(wx + (ww >> 1), wy, 1, wh, TAV.beam);
+  px(wx, wy + (wh >> 1), ww, 1, TAV.beam);
+}
+function drawFireplace() {
+  const fx = 226, fw = 64, fy = 52;
+  const nr = mulberry32(321);
+  for (let y = fy; y < TFLOOR; y++) for (let x = fx; x < fx + fw; x++)
+    px(x, y, 1, 1, nr() < 0.5 ? TAV.stone : (nr() < 0.5 ? TAV.stoneD : TAV.stoneHi));
+  px(fx - 4, fy - 4, fw + 8, 6, TAV.beam); px(fx - 4, fy - 4, fw + 8, 2, TAV.beamHi);
+  const ox = fx + 12, ow = fw - 24, oy = fy + 22;
+  px(ox, oy, ow, TFLOOR - oy, '#0a0603');
+  for (let i = 0; i < ow; i++) {
+    const a = Math.round((Math.sqrt(1 - Math.pow((i - ow / 2) / (ow / 2), 2)) || 0) * 10);
+    px(ox + i, oy - a, 1, a, '#0a0603');
+  }
+  px(ox + 2, TFLOOR - 6, ow - 4, 3, '#2a1a0e');
+}
+function drawTavFire(t) {
+  const ox = 238, ow = 40, baseY = TFLOOR - 4;
+  px(ox + 3, TFLOOR - 6, ow - 6, 4, (t & 2) ? TAV.fireD : '#7a2408');
+  for (let i = 0; i < 7; i++) {
+    const fx = ox + 4 + Math.round(i * (ow - 8) / 6);
+    const ph = Math.sin(t * 0.3 + i * 1.3);
+    const fh = 9 + Math.round(ph * 4) + (i & 1 ? 3 : 0);
+    const fy = baseY - fh;
+    px(fx, fy, 3, fh, TAV.fire);
+    px(fx + 1, fy + 2, 1, fh - 2, TAV.fireHi);
+    px(fx, fy - 1, 2, 2, ph > 0 ? TAV.fireHi : TAV.fire);
+  }
+  dither(ox - 8, TFLOOR, ow + 16, 4, TAV.floor, '#5a3010');
+}
+function drawTavDoor() {
+  const dx = 294, dy = 60, dw = 22, dh = TFLOOR - 60;
+  px(dx - 3, dy - 3, dw + 6, dh + 6, TAV.doorFrame);
+  px(dx, dy, dw, dh, TAV.door);
+  for (let y = dy + 2; y < TFLOOR; y += 5) px(dx, y, dw, 1, TAV.doorFrame);
+  px(dx + 2, dy + 1, 3, dh - 2, TAV.doorHi);
+  px(dx + dw - 8, dy + 8, 6, 6, '#12224a'); px(dx + dw - 9, dy + 9, 8, 4, '#12224a');
+  px(dx + dw - 7, dy + 9, 2, 2, TAV.glassHi);
+  px(dx + 3, dy + (dh >> 1), 2, 3, '#c8a040');
+}
+function drawKeg(x, y) {
+  px(x, y, 16, 16, TAV.floor);
+  dither(x + 2, y, 12, 16, TAV.floorHi, TAV.floor);
+  px(x, y + 2, 16, 2, TAV.beam); px(x, y + 11, 16, 2, TAV.beam);
+}
+function drawLongTable() {
+  const tx = 86, tw = 112, ty = 95;
+  px(tx, ty, tw, 6, TAV.floorHi);
+  px(tx, ty, tw, 2, '#5c4228');
+  px(tx, ty + 6, tw, 2, TAV.floorD);
+  px(tx + 2, ty + 8, tw - 4, 10, TAV.floor);
+  px(tx + 4, ty + 8, 5, TFLOOR - ty + 10, TAV.floorD);
+  px(tx + tw - 9, ty + 8, 5, TFLOOR - ty + 10, TAV.floorD);
+}
+function drawChandelierFrame() {
+  const cx = 152, cy = 24;
+  for (let y = 0; y < cy - 5; y += 3) px(cx, y, 2, 2, TAV.metal);
+  px(cx - 18, cy, 36, 3, TAV.metal); px(cx - 18, cy, 36, 1, TAV.metalHi);
+  [-16, -8, 0, 8, 15].forEach(dx => px(cx + dx, cy - 4, 2, 4, TAV.wax));
+}
+function drawTavCandles(t) {
+  const cx = 152, cy = 24;
+  [-16, -8, 0, 8, 15].forEach((dx, i) => {
+    const bx = cx + dx, fl = Math.sin(t * 0.4 + i * 1.7) > -0.3;
+    px(bx, cy - 7, 2, fl ? 3 : 2, TAV.cand);
+    px(bx, cy - 8, 1, fl ? 2 : 1, TAV.fireHi);
+  });
+}
+function drawTavernRoom() {
+  px(0, 0, W, TFLOOR, TAV.wall);
+  const nr = mulberry32(555);
+  for (let i = 0; i < 520; i++) { const x = (nr() * W) | 0, y = 26 + (nr() * (TFLOOR - 26)) | 0; px(x, y, 1, 1, nr() < 0.5 ? TAV.wallD : TAV.wallHi); }
+  for (let y = 34; y < TFLOOR; y += 7) dither(0, y, W, 1, TAV.wall, TAV.wallD);
+  px(0, 0, W, 26, TAV.ceil);
+  for (let x = 0; x < 160; x++) { const y = Math.round((160 - x) * 0.15); if (y < 26) px(x, y, 1, 2, TAV.beam); }
+  for (let x = 160; x < W; x++) { const y = Math.round((x - 160) * 0.15); if (y < 26) px(x, y, 1, 2, TAV.beam); }
+  px(0, 24, W, 4, TAV.beam); px(0, 24, W, 1, TAV.beamHi);
+  [40, 116, 206, 286].forEach(x => { px(x, 28, 5, TFLOOR - 28, TAV.beam); px(x, 28, 2, TFLOOR - 28, TAV.beamHi); });
+  px(0, TFLOOR, W, H - TFLOOR, TAV.floor);
+  for (let y = TFLOOR; y < H; y++) if ((y - TFLOOR) % 4 === 0) px(0, y, W, 1, TAV.floorD);
+  for (let x = 16; x < W; x += 34) px(x, TFLOOR, 1, H - TFLOOR, TAV.floorD);
+  px(0, TFLOOR, W, 1, TAV.floorHi);
+  drawTavWindowFrame();
+  drawCurtain(0, 26, 15, TFLOOR - 26);
+  drawFireplace();
+  drawTavDoor();
+  drawChandelierFrame();
+}
+// Occupants live in the dynamic layer so they can breathe, chatter and drink.
+function drawTavActors(t) {
+  // barkeep, polishing a mug held steady at his chest (rag wipes up and down)
+  const bkBob = Math.sin(t * 0.06) > 0.7 ? 1 : 0;
+  drawMap(DOCKMASTER, BARKEEP, 54, 84 + bkBob, false);
+  const my = 98 + bkBob;
+  px(59, my, 5, 7, TAV.mug); px(59, my, 5, 1, TAV.mugHi); px(64, my + 2, 1, 3, TAV.mug);
+  const rag = Math.round((Math.sin(t * 0.22) * 0.5 + 0.5) * 4);
+  px(58, my + rag, 6, 2, '#dcd4ba');
+  drawKeg(46, 102);
+  // three captains bobbing on staggered phases, mid-argument
+  const nod = (i) => (Math.sin(t * 0.08 + i * 2.1) > 0.72 ? 1 : 0);
+  drawMap(PIRATE_SIT, PIR_BLUE,    92,  78 + nod(0), false);
+  drawMap(PIRATE_SIT, PIR_GREEN,   124, 80 + nod(1), false);
+  drawMap(PIRATE_SIT, PIR_CRIMSON, 156, 78 + nod(2), true);
+  drawLongTable();   // drawn over their laps
+  // each captain keeps a mug on the table; they take turns raising it to drink
+  const rest = [98, 130, 162];
+  const drinker = Math.floor(t / 320) % 3;
+  const cyc = t % 320;
+  const lift = cyc < 70 ? Math.round(Math.sin(cyc / 70 * Math.PI) * 8) : 0;
+  rest.forEach((mx, i) => {
+    const y = 90 - (i === drinker ? lift : 0);
+    px(mx, y, 5, 6, TAV.mug); px(mx, y, 5, 1, TAV.mugHi); px(mx + 5, y + 2, 1, 3, TAV.mug);
+  });
+}
+
+// ---------- room backgrounds (prerendered once each) ----------
+const plazaBg = document.createElement('canvas'); plazaBg.width = W; plazaBg.height = H;
+const tavBg   = document.createElement('canvas'); tavBg.width = W; tavBg.height = H;
+let bg = plazaBg;
+
+function prerenderPlaza() {
+  C = plazaBg.getContext('2d');
+  drawSkyBase();
+  px(0, HOR, W, H-HOR, P.sky3);
+  drawDistance();
+  drawSea(0);
+  drawPlaza();
+  drawTavern();
+  drawRightBuilding();
+  drawBarrel();
+  C = mainCtx;
+  // Flag which stars fall in open sky vs. behind a building, so twinkling
+  // stars stay behind the rooftops instead of painting over them each frame.
+  const mask = document.createElement('canvas'); mask.width = W; mask.height = H;
+  const mctx = mask.getContext('2d');
+  C = mctx; drawTavern(); drawRightBuilding(); C = mainCtx;
+  const data = mctx.getImageData(0, 0, W, H).data;
+  stars.forEach(s => { s.sky = data[(s.y * W + s.x) * 4 + 3] === 0; });
+}
+function prerenderTavern() {
+  C = tavBg.getContext('2d');
+  drawTavernRoom();
+  C = mainCtx;
+}
+prerenderPlaza();
+
+// ---------------- state ----------------
+const state = {
+  started: false,
+  verb: 'Walk to',
+  heldItem: null,
+  inventory: [],
+  parrotFed: false,
+  coinOnGround: false,
+  hasCoin: false,
+  won: false,
+  hasPermit: false,
+  enteredTavern: false,
+  metBarkeep: false,
+  metCaptains: false,
+  t: 0,
+};
+const player = { x: 70, tx: 70, speed: 1.0, facing: 1, walking: false, pending: null };
+
+let speech = null;
+let speechQueue = [];
+function say(who, text) { speechQueue.push({ who, text }); }
+const SPEAKERS = {
+  milo:   { color: '#f2f2f2', pos: () => ({ x: player.x, y: WALK_Y - 46 }) },
+  dock:   { color: '#e8a33d', pos: () => ({ x: 260, y: 110 }) },
+  parrot: { color: '#68d84c', pos: () => ({ x: 206, y: 82 }) },
+  pirate: { color: '#e0b060', pos: () => ({ x: 132, y: 62 }) },
+  barkeep:{ color: '#cdd4e2', pos: () => ({ x: 66, y: 70 }) },
+  narrator:{ color: '#8888c8', pos: () => ({ x: W/2, y: 16 }) },
+};
+
+// ---------------- inventory ----------------
+const ICONS = {
+  fish: [
+    "............",
+    "..........c.",
+    ".sssss...cc.",
+    "ssossss.ccc.",
+    "sssssssscc..",
+    ".sssss...cc.",
+    "..........c.",
+    "............",
+  ],
+  coin: [
+    "............",
+    "...gggggg...",
+    "..gyyyyyyg..",
+    ".gyyoyyoyyg.",
+    ".gyyyyyyyyg.",
+    ".gyyoyyoyyg.",
+    "..gyyyyyyg..",
+    "...gggggg...",
+  ],
+  permit: [
+    "............",
+    ".wwwwwwwww..",
+    ".wllllllww..",
+    ".wwwwwwwww..",
+    ".wllllwwww..",
+    ".wwwwwwwrr..",
+    ".wllwwwwrr..",
+    ".wwwwwwwww..",
+  ],
+};
+const ICON_COLORS = { s:'#88b4cc', o:'#10101e', c:'#4a8ca0', g:'#8a6a1a', y:'#e8c040', w:'#ded6bc', l:'#5a5a7a', r:'#b03028' };
+
+function addItem(id, name) { state.inventory.push({ id, name }); renderInventory(); }
+function removeItem(id) {
+  state.inventory = state.inventory.filter(i => i.id !== id);
+  if (state.heldItem === id) state.heldItem = null;
+  renderInventory();
+}
+function renderInventory() {
+  const inv = document.getElementById('inventory');
+  inv.innerHTML = '';
+  state.inventory.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'invItem' + (state.heldItem === item.id ? ' selected' : '');
+    div.title = item.name;
+    const c = document.createElement('canvas');
+    c.width = 12; c.height = 8;
+    const ic = c.getContext('2d');
+    ICONS[item.id].forEach((row, y) => {
+      [...row].forEach((ch, x) => {
+        if (ch !== '.') { ic.fillStyle = ICON_COLORS[ch]; ic.fillRect(x, y, 1, 1); }
+      });
+    });
+    div.appendChild(c);
+    div.addEventListener('click', () => onInventoryClick(item));
+    inv.appendChild(div);
+  });
+}
+
+// ---------------- verbs / sentence ----------------
+const sentenceEl = document.getElementById('sentence');
+function setVerb(v) {
+  state.verb = v;
+  state.heldItem = null;
+  document.querySelectorAll('.verb').forEach(b =>
+    b.classList.toggle('selected', b.dataset.verb === v));
+  renderInventory();
+  updateSentence();
+}
+function updateSentence(hoverName) {
+  let s = state.verb;
+  if (state.heldItem) {
+    const item = state.inventory.find(i => i.id === state.heldItem);
+    s += ' ' + item.name + (state.verb === 'Give' ? ' to' : ' with');
+  }
+  if (hoverName) s += ' ' + hoverName;
+  sentenceEl.textContent = s;
+}
+document.querySelectorAll('.verb').forEach(b =>
+  b.addEventListener('click', () => setVerb(b.dataset.verb)));
+setVerb('Walk to');
+
+function onInventoryClick(item) {
+  if (state.verb === 'Give' || state.verb === 'Use') {
+    state.heldItem = item.id;
+    renderInventory();
+    updateSentence();
+  } else if (state.verb === 'Look at') {
+    const lines = {
+      fish: "One slightly bewildered mackerel. Still fresher than my career plans.",
+      coin: "A lucky doubloon. It smells faintly of parrot.",
+      permit: "An official Pirate Permit. Laminated and everything.",
+    };
+    say('milo', lines[item.id]);
+    setVerb('Walk to');
+  } else {
+    say('milo', "I'd rather not do that to my own belongings.");
+    setVerb('Walk to');
+  }
+}
+
+// ---------------- hotspots ----------------
+const PLAZA_HOTSPOTS = [
+  { id:'moon',   name:'the moon',        x:150, y:20, w:22, h:22, walkX:null },
+  { id:'ship',   name:'the distant ship',x:108, y:HOR-18, w:32, h:16, walkX:null },
+  { id:'boat', z:1,   name:'the rowboat',     x:164, y:94, w:38, h:14, walkX:180 },
+  { id:'parrot', z:1, name:'the parrot',      x:196, y:84, w:20, h:20, walkX:222 },
+  { id:'sea',    name:'the sea',         x:92,  y:HOR, w:142, h:PLAZA-HOR, walkX:null },
+  { id:'sign', z:1,   name:'the tavern sign', x:90,  y:60, w:26, h:30, walkX:102 },
+  { id:'door', z:1,   name:'the tavern door', x:24,  y:74, w:24, h:40, walkX:54, autoWalkVerb:'Open' },
+  { id:'window', z:1, name:'the tavern window',x:58, y:70, w:24, h:24, walkX:72 },
+  { id:'lantern', z:1,name:'the lantern',     x:12,  y:80, w:10, h:18, walkX:30 },
+  { id:'stall', z:1,  name:'the shuttered stall', x:236, y:94, w:54, h:18, walkX:262 },
+  { id:'barrel', z:1, name:'the fish barrel', x:108, y:108, w:28, h:36, walkX:146 },
+  { id:'coin', z:1,   name:'the shiny coin',  x:214, y:142, w:12, h:8, walkX:226, hiddenUnless:()=>state.coinOnGround },
+  { id:'dockmaster', z:1, name:'the dockmaster', x:250, y:116, w:18, h:34, walkX:238 },
+];
+const TAVERN_HOTSPOTS = [
+  { id:'tdoor', z:1,  name:'the door',            x:290, y:60, w:28, h:58, walkX:284, autoWalkVerb:'Open' },
+  { id:'fire', z:1,   name:'the fireplace',       x:230, y:74, w:56, h:44, walkX:252 },
+  { id:'twindow', z:1,name:'the window',          x:19,  y:42, w:42, h:52, walkX:46 },
+  { id:'chandelier',  name:'the chandelier',      x:132, y:12, w:44, h:24, walkX:null },
+  { id:'pirates', z:1,name:'the pirate captains', x:88,  y:70, w:96, h:26, walkX:140 },
+  { id:'barkeep', z:1,name:'the barkeep',         x:54,  y:84, w:22, h:32, walkX:82 },
+  { id:'table', z:1,  name:'the long table',      x:86,  y:96, w:112, h:16, walkX:150 },
+  { id:'curtain', z:1,name:'the red curtain',     x:0,   y:30, w:16, h:86, walkX:24 },
+];
+function hotspotAt(pxx, pyy) {
+  // Smallest area wins, and small targets get a forgiveness pad for touch.
+  // A near-miss tap snaps to the parrot instead of falling through to the sea.
+  // Foreground objects (z:1) beat background scenery (z:0); ties go to the smaller target.
+  let best = null, bestArea = Infinity, bestZ = -1;
+  for (const h of room.hotspots) {
+    if (h.hiddenUnless && !h.hiddenUnless()) continue;
+    const area = h.w * h.h;
+    const z = h.z || 0;
+    const pad = area > 1500 ? 0 : 6;
+    if (pxx >= h.x - pad && pxx <= h.x + h.w + pad && pyy >= h.y - pad && pyy <= h.y + h.h + pad) {
+      if (z > bestZ || (z === bestZ && area < bestArea)) { best = h; bestArea = area; bestZ = z; }
+    }
+  }
+  return best;
+}
+
+// ---------------- interactions ----------------
+function defaultResponse(verb) {
+  const generic = {
+    'Open': "It doesn't open. Believe me, I've tried harder things.",
+    'Push': "I push. Nothing pushes back. Story of my life.",
+    'Pull': "Nope. It's got more grip than I do.",
+    'Pick up': "I can't pick that up. My chiropractor would riot.",
+    'Use': "I'm not sure how I'd even use that.",
+    'Talk to': "It gives me the silent treatment.",
+    'Give': "I don't think it wants my stuff.",
+  };
+  say('milo', generic[verb] || "Hmm. That does nothing.");
+}
+
+function plazaInteract(h, verb, held) {
+  const V = verb;
+  switch (h.id) {
+    case 'moon':
+      if (V === 'Look at') say('milo', "A fine three-cheese moon. The good kind of ominous.");
+      else if (V === 'Pick up') say('milo', "I'll need a taller ladder. And a permit for the sky.");
+      else defaultResponse(V);
+      break;
+    case 'ship':
+      if (V === 'Look at') say('milo', "A merchant ship at anchor. Someday I'll have one of those. A slightly used one.");
+      else defaultResponse(V);
+      break;
+    case 'sea':
+      if (V === 'Look at') say('milo', "The Sapphire Sea. One day it'll tremble at the name Milo Brine.");
+      else if (V === 'Use') say('milo', "I already bathed this month.");
+      else defaultResponse(V);
+      break;
+    case 'sign':
+      if (V === 'Look at') say('narrator', "THE RUSTY ANCHOR. Fine grog, questionable shanties, no refunds.");
+      else defaultResponse(V);
+      break;
+    case 'window':
+      if (V === 'Look at') say('milo', "Warm light, laughter, off-key sea shanties. The Rusty Anchor is hopping tonight.");
+      else defaultResponse(V);
+      break;
+    case 'lantern':
+      if (V === 'Look at') say('milo', "A lantern. Doing its one job admirably.");
+      else if (V === 'Pick up') say('milo', "It's bolted down. Mango Cay has trust issues.");
+      else defaultResponse(V);
+      break;
+    case 'stall':
+      if (V === 'Look at') say('milo', "A shuttered mango stall. The season ended abruptly. Nobody talks about it.");
+      else if (V === 'Open') say('milo', "Locked tighter than the tavern's tab ledger.");
+      else defaultResponse(V);
+      break;
+    case 'door':
+      if (V === 'Open') {
+        if (state.hasPermit) gotoRoom('tavern', 'plaza');
+        else say('dock', "Tavern's for licensed pirates only, lad! Rules are rules.");
+      }
+      else if (V === 'Look at') say('milo', "The door to the Rusty Anchor. Sturdy. Judgmental.");
+      else if (V === 'Talk to') say('milo', "Talking to doors. That's week two of unemployment for you.");
+      else defaultResponse(V);
+      break;
+    case 'barrel':
+      if (V === 'Look at') say('milo', "A barrel of fish. The smell has a personality of its own.");
+      else if (V === 'Open') say('milo', "It's already open. Tragically.");
+      else if (V === 'Pick up') {
+        if (state.inventory.some(i => i.id === 'fish')) say('milo', "One fish is plenty. I have a reputation to consider.");
+        else { addItem('fish', 'the fish'); say('milo', "One fish, acquired. Sorry, little guy. It's for a noble cause."); }
+      }
+      else defaultResponse(V);
+      break;
+    case 'parrot':
+      if (V === 'Look at') say('milo', state.parrotFed ? "A well-fed parrot. Smug about it too." : "A parrot. It's guarding something shiny under its foot.");
+      else if (V === 'Talk to') {
+        if (state.parrotFed) { say('parrot', "RAWK! No refunds!"); }
+        else {
+          say('milo', "Hello there. Lovely evening.");
+          say('parrot', "RAWK! Bilge muffin!");
+          say('milo', "Charming. Is that a coin under your foot?");
+          say('parrot', "RAWK! Finders keepers! Bring snacks!");
+        }
+      }
+      else if (V === 'Give' && held === 'fish') {
+        removeItem('fish');
+        state.parrotFed = true;
+        state.coinOnGround = true;
+        say('parrot', "RAWK! Acceptable tribute!");
+        say('narrator', "The parrot drops the coin and inhales the fish whole.");
+        say('milo', "Nature is beautiful. And a little gross.");
+      }
+      else if (V === 'Pick up') say('parrot', "RAWK! Hands off the merchandise!");
+      else defaultResponse(V);
+      break;
+    case 'coin':
+      if (V === 'Pick up') {
+        state.coinOnGround = false;
+        state.hasCoin = true;
+        addItem('coin', 'the coin');
+        say('milo', "One lucky doubloon, only lightly parroted.");
+      }
+      else if (V === 'Look at') say('milo', "The dockmaster's lucky doubloon, glinting in the moonlight.");
+      else defaultResponse(V);
+      break;
+    case 'dockmaster':
+      if (V === 'Talk to') {
+        if (state.won) { say('dock', "Off with ye, Pirate Brine! The sea won't disappoint itself!"); }
+        else if (state.hasCoin) { say('dock', "That's my doubloon! Hand it over and we'll talk business."); }
+        else if (state.parrotFed) { say('dock', "Ye got it off the bird? Well pick it up then, lad!"); }
+        else {
+          say('milo', "Evening! I'd like one pirate career, please.");
+          say('dock', "Ha! No permit, no piracy. And I'm in no mood. That feathered menace stole me lucky doubloon!");
+          say('milo', "The parrot? What does it want, a ransom?");
+          say('dock', "It wants FISH, lad. It always wants fish.");
+        }
+      }
+      else if (V === 'Give' && held === 'coin') {
+        removeItem('coin');
+        state.won = true;
+        state.hasPermit = true;
+        addItem('permit', 'the permit');
+        say('dock', "Me doubloon! Ye've got the makings of a proper scoundrel!");
+        say('narrator', "The dockmaster stamps a crisp Pirate Permit and hands it over.");
+        say('dock', "Welcome to the trade, Pirate Brine. The Rusty Anchor's open to ye now.");
+        say('milo', "A real tavern. With real pirates. Time to make an impression.");
+      }
+      else if (V === 'Look at') say('milo', "The dockmaster. Beard by nature, scowl by choice.");
+      else if (V === 'Give') say('dock', "What am I supposed to do with that?");
+      else defaultResponse(V);
+      break;
+    case 'boat':
+      if (V === 'Look at') say('milo', "A rowboat named 'Sea Biscuit II'. I don't ask what happened to the first.");
+      else if (V === 'Use') say('milo', state.won ? "My grand voyage begins... right after the credits." : "No permit, no boat. The dockmaster watches everything.");
+      else defaultResponse(V);
+      break;
+  }
+}
+
+function tavernInteract(h, verb, held) {
+  const V = verb;
+  switch (h.id) {
+    case 'tdoor':
+      if (V === 'Open') gotoRoom('plaza', 'tavern');
+      else if (V === 'Look at') say('milo', "The way back to the cold docks. Not yet. It's warm in here.");
+      else defaultResponse(V);
+      break;
+    case 'fire':
+      if (V === 'Look at') say('milo', "A proper roaring fire. It's done more for my mood than the dockmaster ever managed.");
+      else if (V === 'Use' || V === 'Pick up') say('milo', "I'm rather attached to my eyebrows.");
+      else defaultResponse(V);
+      break;
+    case 'twindow':
+      if (V === 'Look at') say('milo', "The Sapphire Sea, framed and cozy. From in here it almost looks friendly.");
+      else defaultResponse(V);
+      break;
+    case 'chandelier':
+      if (V === 'Look at') say('milo', "A wheel of candles. Half of them are fighting for their lives.");
+      else defaultResponse(V);
+      break;
+    case 'curtain':
+      if (V === 'Look at') say('milo', "Moth-eaten velvet. Very dramatic. Very flammable.");
+      else if (V === 'Open' || V === 'Pull') say('milo', "Just a mildewed wall behind it. No secret passage. I checked. Twice.");
+      else defaultResponse(V);
+      break;
+    case 'table':
+      if (V === 'Look at') say('milo', "A long table, sticky with a century of spilled grog.");
+      else if (V === 'Pick up') say('milo', "Those mugs aren't mine, and this crowd looks protective of them.");
+      else defaultResponse(V);
+      break;
+    case 'barkeep':
+      if (V === 'Talk to') {
+        if (!state.metBarkeep) {
+          state.metBarkeep = true;
+          say('milo', "Evening. Milo Brine, licensed pirate. It's laminated.");
+          say('barkeep', "Fresh permit, fresh face. Them captains yonder are hiring, if ye can impress 'em.");
+          say('milo', "Impress three pirate captains. How hard can that be.");
+        } else say('barkeep', "Grog's a copper. Advice is free, and worth every penny.");
+      }
+      else if (V === 'Look at') say('milo', "The barkeep. Been wiping the same mug since the last war, I reckon.");
+      else defaultResponse(V);
+      break;
+    case 'pirates':
+      if (V === 'Talk to') {
+        if (!state.metCaptains) {
+          state.metCaptains = true;
+          say('milo', "Evening, captains. I hear you're short a crew member.");
+          say('pirate', "Crew? HA! We need a fourth for cards and a fool for the Mango run.");
+          say('pirate', "Prove ye're worth the salt, lad. Bring us back somethin' worth braggin' about.");
+          say('milo', "A quest. At last. My whole life has been building to a to-do list.");
+        } else say('pirate', "Still here, landlubber? The Mango run won't sail itself.");
+      }
+      else if (V === 'Look at') say('milo', "Three weathered captains. Between them, maybe two full sets of teeth.");
+      else defaultResponse(V);
+      break;
+  }
+}
+
+// ---------------- rooms ----------------
+const rooms = {
+  plaza: {
+    id: 'plaza', bg: plazaBg, hotspots: PLAZA_HOTSPOTS, bounds: [20, W - 14],
+    interact: plazaInteract,
+    entryFrom: { tavern: { x: 60, facing: 1 } },
+    onEnter() {},
+    back(t) {
+      drawStars(t); drawSmoke(t); drawSea(t); drawBoat(t);
+      drawPost();   // foreground pole, drawn over the sea so the parrot can perch on it
+      drawTavernGlow(t); drawRightGlow(t);
+      const bob = state.parrotFed ? 0 : Math.round(Math.sin(t * 0.08));
+      drawMap(PARROT, PC, 201, 90 + bob, false);
+      if (!state.parrotFed) px(205, 99, 3, 2, '#e8c040');
+      if (state.coinOnGround) { px(217, 145, 5, 3, '#e8c040'); px(218, 146, 2, 1, '#8a6a1a'); }
+      drawMap(DOCKMASTER, DC, 252, WALK_Y - 32, true);
+    },
+  },
+  tavern: {
+    id: 'tavern', bg: tavBg, hotspots: TAVERN_HOTSPOTS, bounds: [34, 300],
+    interact: tavernInteract, prerendered: false,
+    entryFrom: { plaza: { x: 286, facing: -1 } },
+    onEnter() {
+      if (!state.enteredTavern) {
+        state.enteredTavern = true;
+        say('narrator', "THE RUSTY ANCHOR. Warm, loud, gloriously disreputable.");
+        say('milo', "So this is the inside. Smells like destiny. And bilge.");
+      }
+    },
+    back(t) { drawTavFire(t); drawTavWindow(t); drawTavActors(t); drawTavCandles(t); },
+  },
+};
+let room = rooms.plaza;
+function gotoRoom(id, from) {
+  room = rooms[id];
+  if (id === 'tavern' && !room.prerendered) { prerenderTavern(); room.prerendered = true; }
+  bg = room.bg;
+  const e = room.entryFrom[from] || { x: W / 2, facing: 1 };
+  player.x = player.tx = e.x;
+  player.facing = e.facing;
+  player.walking = false;
+  player.pending = null;
+  speech = null; speechQueue.length = 0;
+  setVerb('Walk to');
+  room.onEnter();
+}
+
+// ---------------- input ----------------
+function canvasPoint(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+cv.addEventListener('mousemove', e => {
+  const p = canvasPoint(e);
+  const h = hotspotAt(p.x, p.y);
+  updateSentence(h ? h.name : '');
+});
+cv.addEventListener('click', e => {
+  if (!state.started) return;
+  const p = canvasPoint(e);
+  const h = hotspotAt(p.x, p.y);
+  if (speech) { speech = null; }
+  const [minX, maxX] = room.bounds;
+  const clampX = x => Math.max(minX, Math.min(maxX, x));
+  if (!h) {
+    player.tx = clampX(p.x);
+    player.pending = null;
+    setVerb('Walk to');
+    return;
+  }
+  const hasWalkX = h.walkX !== null && h.walkX !== undefined;
+  const verb = state.verb, held = state.heldItem;
+  if (verb === 'Walk to') {
+    player.tx = hasWalkX ? h.walkX : clampX(p.x);
+    // Some hotspots (doors) act on arrival even for a plain "Walk to".
+    player.pending = h.autoWalkVerb ? { h, verb: h.autoWalkVerb, held: null } : null;
+  } else if ((verb === 'Give' || verb === 'Use') && !held && state.inventory.length) {
+    say('milo', "Give what? Pick something from my pockets first.");
+  } else {
+    player.tx = hasWalkX ? h.walkX : player.x;
+    player.pending = { h, verb, held };
+  }
+  setVerb('Walk to');
+});
+
+document.getElementById('titleOverlay').addEventListener('click', () => {
+  document.getElementById('titleOverlay').classList.add('hidden');
+  state.started = true;
+  say('narrator', "MANGO CAY. Night. Somewhere in the Sapphire Sea.");
+  say('milo', "I'm Milo Brine, and one day I'll be the most feared pirate on these waters.");
+  say('milo', "Right after I figure out how to get a boat.");
+});
+
+// ---------------- speech ----------------
+function drawSpeech() {
+  if (!speech && speechQueue.length) {
+    const next = speechQueue.shift();
+    speech = { who: next.who, text: next.text, until: state.t + Math.max(100, next.text.length * 4.5) };
+  }
+  if (!speech) return;
+  if (state.t > speech.until) { speech = null; return; }
+  const sp = SPEAKERS[speech.who];
+  const pos = sp.pos();
+  C.font = 'bold 8px monospace';
+  C.textAlign = 'center';
+  const words = speech.text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const w2 of words) {
+    if ((line + ' ' + w2).trim().length > 30) { lines.push(line.trim()); line = w2; }
+    else line += ' ' + w2;
+  }
+  if (line.trim()) lines.push(line.trim());
+  let ty = Math.max(10, pos.y - (lines.length - 1) * 9);
+  // Clamp horizontally by measured width so no line runs past the frame edge.
+  let maxW = 0;
+  for (const l of lines) maxW = Math.max(maxW, C.measureText(l).width);
+  const half = maxW / 2 + 3;
+  const tx = Math.max(half, Math.min(W - half, pos.x));
+  lines.forEach((l, i) => {
+    const yy = ty + i * 9;
+    C.fillStyle = '#08080c';
+    for (const [ox, oy] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]])
+      C.fillText(l, tx + ox, yy + oy);
+    C.fillStyle = sp.color;
+    C.fillText(l, tx, yy);
+  });
+}
+
+// ---------------- game loop ----------------
+function update() {
+  state.t++;
+  const dx = player.tx - player.x;
+  if (Math.abs(dx) > 1) {
+    player.walking = true;
+    player.facing = dx > 0 ? 1 : -1;
+    player.x += Math.sign(dx) * player.speed;
+  } else {
+    if (player.walking && player.pending) {
+      const p = player.pending;
+      player.pending = null;
+      player.facing = (p.h.x + p.h.w / 2) > player.x ? 1 : -1;
+      room.interact(p.h, p.verb, p.held);
+    }
+    player.walking = false;
+  }
+}
+
+function render() {
+  const t = state.t;
+  C.drawImage(bg, 0, 0);
+  room.back(t);
+  // player
+  const flip = player.facing === -1;
+  const legs = player.walking ? ((Math.floor(t / 7) % 2) ? LEGS_A : LEGS_B) : LEGS_STAND;
+  drawMap(MILO_BODY, MC, Math.round(player.x) - 8, WALK_Y - 40, flip);
+  drawMap(legs, MC, Math.round(player.x) - 8, WALK_Y - 14, flip);
+  if (state.started) drawSpeech();
+}
+
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script>
+</body>
+</html>

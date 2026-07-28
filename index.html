@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Games</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0b0b16;
+    color: #d8d8f0;
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 48px 20px;
+  }
+  h1 {
+    color: #d848c8;
+    font-size: clamp(32px, 8vw, 64px);
+    letter-spacing: 4px;
+    text-shadow: 2px 2px 0 #58105a, 4px 4px 0 #200828, 7px 7px 0 #000;
+    margin-bottom: 8px;
+    text-align: center;
+  }
+  .tagline { color: #8888c8; letter-spacing: 2px; font-style: italic; margin-bottom: 44px; text-align: center; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 18px;
+    width: 100%;
+    max-width: 720px;
+  }
+  .card {
+    display: block;
+    background: #14142a;
+    border: 2px solid #2a2048;
+    border-radius: 6px;
+    padding: 22px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+  .card:hover { border-color: #d8b8ff; transform: translateY(-2px); }
+  .card.soon { opacity: 0.5; cursor: default; }
+  .card.soon:hover { border-color: #2a2048; transform: none; }
+  .card h2 { color: #d8b8ff; font-size: 20px; letter-spacing: 1px; margin-bottom: 6px; }
+  .card p { color: #7a7ab0; font-size: 13px; line-height: 1.5; }
+  .badge { display: inline-block; margin-top: 12px; font-size: 11px; letter-spacing: 2px; color: #58c878; text-transform: uppercase; }
+  .badge.wip { color: #c8a040; }
+  footer { margin-top: 52px; color: #4a4a7a; font-size: 12px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <h1>PIXEL GAMES</h1>
+  <p class="tagline">small browser games, made by hand</p>
+  <div class="grid">
+    <a class="card" href="mango-cay/">
+      <h2>Mango Cay</h2>
+      <p>A point-and-click pixel pirate adventure. Feed the parrot, earn your permit, and talk your way into the tavern.</p>
+      <span class="badge">Play</span>
+    </a>
+    <div class="card soon">
+      <h2>Car Game</h2>
+      <p>Coming soon.</p>
+      <span class="badge wip">In progress</span>
+    </div>
+  </div>
+  <footer>built by Ian Cameron</footer>
+</body>
+</html>
